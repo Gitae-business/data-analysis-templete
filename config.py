@@ -13,20 +13,18 @@ class Config:
 
     SRC_DIR = os.path.join(ROOT_DIR, 'src')
     MODEL_DIR = os.path.join(SRC_DIR, 'models')
-    MODEL_NAME = 'CustomModel'
-    MODEL_PATH = './models/'
-
     CHECKPOINT_DIR = os.path.join(ROOT_DIR, 'checkpoints')
 
     TARGET = 'target'
 
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    BATCH_SIZE = 64
+    BATCH_SIZE = 256
     EPOCHS = 1e4
-    LEARNING_RATE = 1e-4
+    LEARNING_RATE = 1e-3
     WEIGHT_DECAY = 1e-1
 
     SEED = 42
+    OOF_SPLIT = 5
 
     def __init__(self):
         self.set_seed(self.SEED)

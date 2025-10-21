@@ -21,7 +21,7 @@ class Trainer:
         device=None,
         checkpoint_dir=None,
         early_stop_patience=5,
-        n_splits=5,
+        n_splits=config.OOF_SPLIT,
         **model_kwargs
     ):
         self.device = device or config.DEVICE
@@ -32,7 +32,7 @@ class Trainer:
         self.model_kwargs = model_kwargs
         self.n_splits = n_splits
 
-        self.checkpoint_dir = checkpoint_dir or os.path.join(config.MODEL_PATH, "checkpoints")
+        self.checkpoint_dir = os.path.join(checkpoint_dir or config.CHECKPOINT_DIR, model_name)
         os.makedirs(self.checkpoint_dir, exist_ok=True)
 
         self.criterion = criterion
@@ -67,21 +67,39 @@ class Trainer:
             X_valid_tensor = torch.FloatTensor(X_valid).to(self.device)
             y_valid_tensor = torch.FloatTensor(y_valid.values).unsqueeze(1).to(self.device)
 
+            best_model_path = os.path.join(self.checkpoint_dir, f"{self.model_name}_fold_{fold}.pth")
+
+            if os.path.exists(best_model_path):
+                checkpoint = torch.load(best_model_path, map_location=self.device)
+                model_fold.load_state_dict(checkpoint['model_state_dict'])
+                
+                if checkpoint.get('optimizer_state_dict') is not None:
+                    optimizer_fold.load_state_dict(checkpoint['optimizer_state_dict'])
+                
+                start_epoch = checkpoint['epoch'] + 1
+                print(f"Checkpoint exists. Fold {fold+1} skipped. Loaded model from epoch {start_epoch}.")
+                models.append(model_fold)
+                preprocessors.append(preprocessor_fold)
+
+                with torch.no_grad():
+                    oof_preds[valid_idx] = model_fold(X_valid_tensor).cpu().numpy().flatten()
+                continue
+
             train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
             train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
 
             early_stopper = EarlyStopping(
                 patience=self.early_stop_patience,
                 verbose=True,
-                checkpoint_dir=self.checkpoint_dir,
-                model_name=f"{config.MODEL_NAME}_fold{fold+1}"
+                model_name=self.model_name,
+                fold=fold,
             )
 
             for epoch in range(n_epochs):
                 model_fold.train()
                 epoch_loss = 0
                 loop = tqdm(train_loader, desc=f"Fold {fold+1} Epoch {epoch+1}/{n_epochs}", leave=False)
-                
+
                 for batch_X, batch_y in loop:
                     optimizer_fold.zero_grad()
                     outputs = model_fold(batch_X)
@@ -99,17 +117,24 @@ class Trainer:
 
                 print(f"Epoch {epoch+1}/{n_epochs} | Train Loss: {epoch_loss:.4f} | Val Loss: {val_loss:.4f}")
 
-                early_stopper(val_loss, model_fold, epoch)
+                early_stopper(val_loss, model_fold, optimizer=optimizer_fold, epoch=epoch)
                 if early_stopper.early_stop:
                     print(f"Early stopping triggered at epoch {epoch+1} of fold {fold+1}")
                     break
 
-            best_model_path = os.path.join(self.checkpoint_dir, f"{config.MODEL_NAME}_fold{fold+1}_best.pth")
             if os.path.exists(best_model_path):
-                model_fold.load_state_dict(torch.load(best_model_path))
+                checkpoint = torch.load(best_model_path, map_location=self.device)
+                model_fold.load_state_dict(checkpoint['model_state_dict'])
+                if checkpoint.get('optimizer_state_dict') is not None:
+                    optimizer_fold.load_state_dict(checkpoint['optimizer_state_dict'])
+                start_epoch = checkpoint['epoch'] + 1
+                print(f"Loaded best model from {best_model_path} after training, epoch {start_epoch}")
+            else:
+                print(f"Warning: model file not found at {best_model_path}. Using current weights.")
 
             models.append(model_fold)
             preprocessors.append(preprocessor_fold)
+
             with torch.no_grad():
                 oof_preds[valid_idx] = model_fold(X_valid_tensor).cpu().numpy().flatten()
 

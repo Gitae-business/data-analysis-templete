@@ -8,23 +8,27 @@ from src.preprocessing.preprocessor import DataPreprocessor
 from src.postprocessing.postprocessor import PostProcessor
 
 class Predictor:
-    def __init__(self, model, preprocessor, model_path=None):
+    def __init__(self, model, preprocessor: DataPreprocessor, model_name="MLP", fold=0):
         self.device = config.DEVICE
         self.model = model.to(self.device)
-        self.model_path = model_path or os.path.join(config.MODEL_PATH, f"{config.MODEL_NAME}_best.pth")
+        self.model_name = model_name
+        self.fold = fold
+
+        self.model_path = os.path.join(config.CHECKPOINT_DIR, model_name, f"{model_name}_fold_{fold}.pth")
+
         self.preprocessor = preprocessor
         self.postprocessor = PostProcessor()
 
         if os.path.exists(self.model_path):
-            self.model.load_state_dict(torch.load(self.model_path, map_location=self.device))
-            print(f"Model loaded from: {self.model_path}")
+            checkpoint = torch.load(self.model_path, map_location=self.device)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.model.eval()
         else:
-            print("Warning: model file not found. Using current weights.")
+            print(f"Warning: checkpoint not found at {self.model_path}")
 
         self.model.eval()
 
     def predict(self, test_df, batch_size=None, apply_postprocess=True):
-        print("Start prediction.")
         batch_size = batch_size or config.BATCH_SIZE
 
         X_test = self.preprocessor.transform(test_df)
@@ -39,8 +43,7 @@ class Predictor:
         preds = []
         with torch.no_grad():
             for (batch_X,) in loader:
-                batch_X = batch_X.to(self.device)
-                outputs = self.model(batch_X)
+                outputs = self.model(batch_X.to(self.device))
                 preds.extend(outputs.cpu().numpy())
 
         preds = np.array(preds)
@@ -48,7 +51,6 @@ class Predictor:
         if apply_postprocess:
             preds = self.postprocessor.apply(preds)
 
-        print("Prediction complete.")
         return preds
 
     def save_submission(self, preds):
@@ -64,4 +66,5 @@ class Predictor:
 
         submission_df.to_csv(save_path, index=False)
         print(f"Submission file saved to: {save_path}")
+
         return save_path
